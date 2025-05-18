@@ -35,6 +35,7 @@ from diffusers.utils import (
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.flux.pipeline_output import FluxPipelineOutput
 from diffusers.pipelines.flux.pipeline_flux import FluxPipeline
+from peft.tuners.tuners_utils import BaseTunerLayer
 
 import copy
 from tqdm.auto import trange
@@ -144,26 +145,20 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 class RegionalFluxAttnProcessor2_0:
-    def __init__(self):  
+    def __init__(self):
         self.regional_mask = None
-    def FluxAttnProcessor2_0_call(
-        self,
-        attn,
-        hidden_states,
-        encoder_hidden_states = None,
-        attention_mask = None,
-        image_rotary_emb = None,
-    ) -> torch.FloatTensor:
-        
+
+    def prepare_qkv(self, attn, hidden_states, encoder_hidden_states=None, image_rotary_emb=None):
         batch_size, _, _ = hidden_states.shape
 
-        # `sample` projections.
         query = attn.to_q(hidden_states)
         key = attn.to_k(hidden_states)
         value = attn.to_v(hidden_states)
 
         inner_dim = key.shape[-1]
         head_dim = inner_dim // attn.heads
+        # print('Inner dim:', inner_dim)
+        # print('Head dim:', head_dim)
 
         query = query.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
         key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
@@ -195,24 +190,40 @@ class RegionalFluxAttnProcessor2_0:
                 encoder_hidden_states_query_proj = attn.norm_added_q(encoder_hidden_states_query_proj)
             if attn.norm_added_k is not None:
                 encoder_hidden_states_key_proj = attn.norm_added_k(encoder_hidden_states_key_proj)
-            
+
             # attention
             query = torch.cat([encoder_hidden_states_query_proj, query], dim=2)
             key = torch.cat([encoder_hidden_states_key_proj, key], dim=2)
             value = torch.cat([encoder_hidden_states_value_proj, value], dim=2)
-            
+
         if image_rotary_emb is not None:
             from diffusers.models.embeddings import apply_rotary_emb
             query = apply_rotary_emb(query, image_rotary_emb)
             key = apply_rotary_emb(key, image_rotary_emb)
 
-        # apply mask on attention
-        hidden_states = torch.nn.functional.scaled_dot_product_attention(query, key, value, dropout_p=0.0, is_causal=False, attn_mask=attention_mask)
+        return query, key, value
 
+    def FluxAttnProcessor2_0_call(
+        self,
+        attn,
+        hidden_states,
+        encoder_hidden_states = None,
+        attention_mask = None,
+        image_rotary_emb = None,
+    ) -> torch.FloatTensor:
+        batch_size, _, _ = hidden_states.shape
+
+        # print('hidden_states shape:', hidden_states.shape)
+        # print('encoder_hidden_states shape:', encoder_hidden_states.shape if encoder_hidden_states is not None else None)
+        # print('image_rotary_emb shape:', image_rotary_emb[0].shape if image_rotary_emb is not None else None)
+        query, key, value = self.prepare_qkv(attn, hidden_states, encoder_hidden_states, image_rotary_emb)
+        hidden_states = torch.nn.functional.scaled_dot_product_attention(query, key, value, dropout_p=0.0, is_causal=False)
+        # hidden_states = hidden_states_sum
+
+        head_dim = query.shape[-1]
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
         hidden_states = hidden_states.to(query.dtype)
-        
-            
+
         if encoder_hidden_states is not None:
             encoder_hidden_states, hidden_states = (
                 hidden_states[:, : encoder_hidden_states.shape[1]],
@@ -228,50 +239,64 @@ class RegionalFluxAttnProcessor2_0:
             return hidden_states, encoder_hidden_states
         else:
             return hidden_states
-    
+
+    # def set_adapter(self, main_module, adapter_name: Union[str, List[str]]) -> None:
+    #     for _, module in main_module.named_modules():
+    #         if isinstance(module, BaseTunerLayer):
+    #             if hasattr(module, "set_adapter"):
+    #                 module.set_adapter(adapter_name)
+    #             # Previous versions of PEFT does not support multi-adapter inference
+    #             elif not hasattr(module, "set_adapter") and len(adapter_name) != 1:
+    #                 raise ValueError(
+    #                     "You are trying to set multiple adapters and you have a PEFT version that does not support multi-adapter inference. Please upgrade to the latest version of PEFT."
+    #                     " `pip install -U peft` or `pip install -U git+https://github.com/huggingface/peft.git`"
+    #                 )
+    #             else:
+    #                 module.active_adapter = adapter_name
+
     def __call__(
         self,
         attn,
         hidden_states,
-        hidden_states_base = None,
+        # hidden_states_base = None,
         encoder_hidden_states = None,
-        encoder_hidden_states_base = None,
+        # encoder_hidden_states_base = None,
         attention_mask = None,
         image_rotary_emb = None,
-        image_rotary_emb_base = None,
+        # image_rotary_emb_base = None,
         additional_kwargs = None,
-        base_ratio = None,
+        # base_ratio = None,
     ) -> torch.FloatTensor:
-        
-        if base_ratio is not None:
-            attn_output_base = self.FluxAttnProcessor2_0_call(
-                attn=attn,
-                hidden_states=hidden_states_base if hidden_states_base is not None else hidden_states,
-                encoder_hidden_states=encoder_hidden_states_base,
-                attention_mask=None,
-                image_rotary_emb=image_rotary_emb_base,
-            )
 
-            if encoder_hidden_states_base is not None:
-                hidden_states_base, encoder_hidden_states_base = attn_output_base
-            else:
-                hidden_states_base = attn_output_base
+        # if base_ratio is not None:
+        #     attn_output_base = self.FluxAttnProcessor2_0_call(
+        #         attn=attn,
+        #         hidden_states=hidden_states_base if hidden_states_base is not None else hidden_states,
+        #         encoder_hidden_states=encoder_hidden_states_base,
+        #         attention_mask=None,
+        #         image_rotary_emb=image_rotary_emb_base,
+        #     )
+
+        #     if encoder_hidden_states_base is not None:
+        #         hidden_states_base, encoder_hidden_states_base = attn_output_base
+        #     else:
+        #         hidden_states_base = attn_output_base
 
         # move regional mask to device
-        if base_ratio is not None and 'regional_attention_mask' in additional_kwargs:
-            if self.regional_mask is not None:
-                regional_mask = self.regional_mask.to(hidden_states.device)
-            else:
-                self.regional_mask = additional_kwargs['regional_attention_mask']
-                regional_mask = self.regional_mask.to(hidden_states.device)
-        else:
-            regional_mask = None
+        # if base_ratio is not None and 'regional_attention_mask' in additional_kwargs:
+        #     if self.regional_mask is not None:
+        #         regional_mask = self.regional_mask.to(hidden_states.device)
+        #     else:
+        #         self.regional_mask = additional_kwargs['regional_attention_mask']
+        #         regional_mask = self.regional_mask.to(hidden_states.device)
+        # else:
+        #     regional_mask = None
 
         attn_output = self.FluxAttnProcessor2_0_call(
             attn=attn,
             hidden_states=hidden_states,
             encoder_hidden_states=encoder_hidden_states,
-            attention_mask=regional_mask,
+            # attention_mask=regional_mask,
             image_rotary_emb=image_rotary_emb,
         )
 
@@ -279,44 +304,45 @@ class RegionalFluxAttnProcessor2_0:
             hidden_states, encoder_hidden_states = attn_output
         else:
             hidden_states = attn_output
-        
+
         if encoder_hidden_states is not None:
 
-            if base_ratio is not None:
-                # merge hidden_states and hidden_states_base
-                hidden_states = hidden_states*(1-base_ratio) + hidden_states_base*base_ratio
-                return hidden_states, encoder_hidden_states, encoder_hidden_states_base
-            else: # both regional and base input are base prompts, skip the merge
-                return hidden_states, encoder_hidden_states, encoder_hidden_states
-        
+            # if base_ratio is not None:
+            #     # merge hidden_states and hidden_states_base
+            #     hidden_states = hidden_states*(1-base_ratio) + hidden_states_base*base_ratio
+            #     return hidden_states, encoder_hidden_states, encoder_hidden_states_base
+            # else: # both regional and base input are base prompts, skip the merge
+            #     return hidden_states, encoder_hidden_states, encoder_hidden_states
+            return hidden_states, encoder_hidden_states
+
         else:
-            if base_ratio is not None:
-                
-                encoder_hidden_states, hidden_states = (
-                    hidden_states[:, : additional_kwargs['encoder_seq_len']],
-                    hidden_states[:, additional_kwargs['encoder_seq_len'] :],
-                )
-               
-                encoder_hidden_states_base, hidden_states_base = (
-                    hidden_states_base[:, : additional_kwargs["encoder_seq_len_base"]],
-                    hidden_states_base[:, additional_kwargs["encoder_seq_len_base"] :],
-                )
+            # if base_ratio is not None:
 
-                # merge hidden_states and hidden_states_base
-                hidden_states = hidden_states*(1-base_ratio) + hidden_states_base*base_ratio
+            #     encoder_hidden_states, hidden_states = (
+            #         hidden_states[:, : additional_kwargs['encoder_seq_len']],
+            #         hidden_states[:, additional_kwargs['encoder_seq_len'] :],
+            #     )
 
-                # concat back            
-                hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
-                hidden_states_base = torch.cat([encoder_hidden_states_base, hidden_states_base], dim=1)
-    
-                return hidden_states, hidden_states_base
+            #     encoder_hidden_states_base, hidden_states_base = (
+            #         hidden_states_base[:, : additional_kwargs["encoder_seq_len_base"]],
+            #         hidden_states_base[:, additional_kwargs["encoder_seq_len_base"] :],
+            #     )
 
-            else: # both regional and base input are base prompts, skip the merge
-                return hidden_states, hidden_states
-        
+            #     # merge hidden_states and hidden_states_base
+            #     hidden_states = hidden_states*(1-base_ratio) + hidden_states_base*base_ratio
 
-class RegionalFluxPipeline(FluxPipeline):   
-    
+            #     # concat back
+            #     hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
+            #     hidden_states_base = torch.cat([encoder_hidden_states_base, hidden_states_base], dim=1)
+
+            #     return hidden_states, hidden_states_base
+
+            # else: # both regional and base input are base prompts, skip the merge
+            return hidden_states
+
+
+class RegionalFluxPipeline(FluxPipeline):
+
     @torch.inference_mode()
     def __call__(
             self,
@@ -348,7 +374,7 @@ class RegionalFluxPipeline(FluxPipeline):
 
         # 3. Define call parameters
         batch_size = num_samples if num_samples else prompt_embeds.shape[0]
-        
+
         # encode base prompt
         (
             prompt_embeds,
@@ -384,7 +410,7 @@ class RegionalFluxPipeline(FluxPipeline):
                     lora_scale=None,
                 )
                 regional_inputs.append((regional_mask, regional_prompt_embeds))
-        
+
         ## prepare masks for regional control
         conds = []
         masks = []
@@ -400,13 +426,15 @@ class RegionalFluxPipeline(FluxPipeline):
         regional_embeds = torch.cat(conds, dim=1)
         encoder_seq_len = regional_embeds.shape[1]
 
+        num_of_regions = len(masks)
+
         # initialize attention mask
         regional_attention_mask = torch.zeros(
-            (encoder_seq_len + hidden_seq_len, encoder_seq_len + hidden_seq_len),
+            (num_of_regions, encoder_seq_len + hidden_seq_len, encoder_seq_len + hidden_seq_len),
             device=masks[0].device,
             dtype=torch.bool
         )
-        num_of_regions = len(masks)
+        # print(encoder_seq_len, hidden_seq_len, num_of_regions)
         each_prompt_seq_len = encoder_seq_len // num_of_regions
 
         # initialize self-attended mask
@@ -418,34 +446,36 @@ class RegionalFluxPipeline(FluxPipeline):
         # handle each mask
         for i in range(num_of_regions):
             # txt attends to itself
-            regional_attention_mask[i*each_prompt_seq_len:(i+1)*each_prompt_seq_len, i*each_prompt_seq_len:(i+1)*each_prompt_seq_len] = True
+            regional_attention_mask[i, i*each_prompt_seq_len:(i+1)*each_prompt_seq_len, i*each_prompt_seq_len:(i+1)*each_prompt_seq_len] = True
 
             # txt attends to corresponding regional img
-            regional_attention_mask[i*each_prompt_seq_len:(i+1)*each_prompt_seq_len, encoder_seq_len:] = masks[i].transpose(-1, -2)
+            regional_attention_mask[i, i*each_prompt_seq_len:(i+1)*each_prompt_seq_len, encoder_seq_len:] = masks[i].transpose(-1, -2)
 
             # regional img attends to corresponding txt
-            regional_attention_mask[encoder_seq_len:, i*each_prompt_seq_len:(i+1)*each_prompt_seq_len] = masks[i]
+            regional_attention_mask[i, encoder_seq_len:, i*each_prompt_seq_len:(i+1)*each_prompt_seq_len] = masks[i]
 
             # regional img attends to corresponding regional img
             img_size_masks = masks[i][:, :1].repeat(1, hidden_seq_len)
             img_size_masks_transpose = img_size_masks.transpose(-1, -2)
-            self_attend_masks = torch.logical_or(self_attend_masks, 
+
+            regional_attention_mask[i, encoder_seq_len:, encoder_seq_len:] = torch.logical_and(img_size_masks, img_size_masks_transpose)
+            self_attend_masks = torch.logical_or(self_attend_masks,
                                                     torch.logical_and(img_size_masks, img_size_masks_transpose))
 
             # update union
-            union_masks = torch.logical_or(union_masks, 
+            union_masks = torch.logical_or(union_masks,
                                             torch.logical_or(img_size_masks, img_size_masks_transpose))
 
         background_masks = torch.logical_not(union_masks)
 
-        background_and_self_attend_masks = torch.logical_or(background_masks, self_attend_masks)
+        # background_and_self_attend_masks = torch.logical_or(background_masks, self_attend_masks)
 
-        regional_attention_mask[encoder_seq_len:, encoder_seq_len:] = background_and_self_attend_masks
+        # regional_attention_mask[-1, encoder_seq_len:, encoder_seq_len:] = background_masks
         ## done prepare masks for regional control
 
         # 4. Prepare latent variables
-        num_channels_latents = self.transformer.config.in_channels // 4 
-        latents, latent_image_ids = self.prepare_latents( 
+        num_channels_latents = self.transformer.config.in_channels // 4
+        latents, latent_image_ids = self.prepare_latents(
             batch_size * num_images_per_prompt,
             num_channels_latents,
             height,
@@ -455,12 +485,12 @@ class RegionalFluxPipeline(FluxPipeline):
             generator,
             initial_latent,
         )
-    
+
         # 4.Prepare timesteps
         sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
-        
+
         image_seq_len = (int(height) // self.vae_scale_factor) * (int(width) // self.vae_scale_factor)
-        
+
         mu = calculate_shift(
             image_seq_len,
             self.scheduler.config.base_image_seq_len,
@@ -468,12 +498,12 @@ class RegionalFluxPipeline(FluxPipeline):
             self.scheduler.config.base_shift,
             self.scheduler.config.max_shift,
         )
-        
+
         timesteps, num_inference_steps = retrieve_timesteps(
             self.scheduler,
             num_inference_steps,
             device,
-            timesteps, 
+            timesteps,
             sigmas,
             mu=mu,
         )
@@ -489,52 +519,68 @@ class RegionalFluxPipeline(FluxPipeline):
             guidance = None
 
         # 6. Denoising loop
-        with self.progress_bar(total=num_inference_steps) as progress_bar:
-            for i, t in enumerate(timesteps):
-                
-                if i < mask_inject_steps:
-                    chosen_prompt_embeds = regional_embeds
-                    base_ratio = joint_attention_kwargs['base_ratio']
-                else:
-                    chosen_prompt_embeds = prompt_embeds
-                    base_ratio = None
-                
-                # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-                timestep = t.expand(latents.shape[0]).to(latents.dtype)
-                
-                noise_pred = self.transformer(
-                    hidden_states=latents,
-                    timestep=timestep / 1000,
-                    guidance=guidance,
-                    pooled_projections=pooled_prompt_embeds,
-                    encoder_hidden_states=chosen_prompt_embeds,
-                    encoder_hidden_states_base=prompt_embeds,
-                    base_ratio=base_ratio,
-                    txt_ids=text_ids,
-                    img_ids=latent_image_ids,
-                    joint_attention_kwargs={
-                        'single_inject_blocks_interval': joint_attention_kwargs['single_inject_blocks_interval'] if 'single_inject_blocks_interval' in joint_attention_kwargs else len(self.transformer.single_transformer_blocks), 
-                        'double_inject_blocks_interval': joint_attention_kwargs['double_inject_blocks_interval'] if 'double_inject_blocks_interval' in joint_attention_kwargs else len(self.transformer.transformer_blocks),
-                        'regional_attention_mask': regional_attention_mask if base_ratio is not None else None,
-                    },
-                    return_dict=False,
-                )[0]
+        # with self.progress_bar(total=num_inference_steps) as progress_bar:
+        for i, t in enumerate(timesteps):
+            # print(i)
+            if i < mask_inject_steps:
+                chosen_prompt_embeds = regional_embeds
+                base_ratio = joint_attention_kwargs['base_ratio']
+                do_regional = True
+            else:
+                chosen_prompt_embeds = prompt_embeds
+                base_ratio = None
+                do_regional = False
 
-                # compute the previous noisy sample x_t -> x_t-1
-                latents_dtype = latents.dtype
-                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+            # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
+            timestep = t.expand(latents.shape[0]).to(latents.dtype)
 
-                if latents.dtype != latents_dtype:
-                    if torch.backends.mps.is_available():
-                        # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
-                        latents = latents.to(latents_dtype)
+            noise_pred = self.transformer(
+                hidden_states=latents,
+                timestep=timestep / 1000,
+                guidance=guidance,
+                pooled_projections=pooled_prompt_embeds,
+                encoder_hidden_states=chosen_prompt_embeds,
+                encoder_hidden_states_base=prompt_embeds,
+                base_ratio=base_ratio,
+                txt_ids=text_ids,
+                img_ids=latent_image_ids,
+                do_regional=do_regional,
+                joint_attention_kwargs={
+                    'single_inject_blocks_interval': joint_attention_kwargs['single_inject_blocks_interval'] if 'single_inject_blocks_interval' in joint_attention_kwargs else len(self.transformer.single_transformer_blocks),
+                    'double_inject_blocks_interval': joint_attention_kwargs['double_inject_blocks_interval'] if 'double_inject_blocks_interval' in joint_attention_kwargs else len(self.transformer.transformer_blocks),
+                    'regional_attention_mask': regional_attention_mask if base_ratio is not None else None,
+                    'regional_adapters': joint_attention_kwargs['regional_adapters'],
+                    'regional_adapter_weights': joint_attention_kwargs['regional_adapter_weights'],
+                    'base_adapter': joint_attention_kwargs['base_adapter'],
+                    'base_adapter_weight': joint_attention_kwargs['base_adapter_weight'],
+                    'normal_adapter': joint_attention_kwargs['normal_adapter'],
+                    'normal_adapter_weight': joint_attention_kwargs['normal_adapter_weight'],
+                },
+                return_dict=False,
+            )[0]
 
-                # call the callback, if provided
-                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
-                    progress_bar.update()
+            # compute the previous noisy sample x_t -> x_t-1
+            latents_dtype = latents.dtype
+            latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
-                if XLA_AVAILABLE:
-                    xm.mark_step()
+            if latents.dtype != latents_dtype:
+                if torch.backends.mps.is_available():
+                    # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
+                    latents = latents.to(latents_dtype)
+
+            # call the callback, if provided
+            # if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+            #     progress_bar.update()
+
+            # unpacked_latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
+            # unpacked_latents = (unpacked_latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
+            # image = self.vae.decode(unpacked_latents, return_dict=False)[0]
+            # image = self.image_processor.postprocess(image, output_type='pil')
+            # image[0].save(f"output_timestamp_{i}.png")
+
+
+            if XLA_AVAILABLE:
+                xm.mark_step()
 
         if output_type == "latent":
             image = latents

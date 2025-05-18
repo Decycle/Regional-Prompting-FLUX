@@ -83,36 +83,36 @@ class FluxSingleTransformerBlock(nn.Module):
         hidden_states: torch.FloatTensor,
         temb: torch.FloatTensor,
         image_rotary_emb=None,
-        hidden_states_base=None,
-        base_ratio=None,
-        image_rotary_emb_base=None,
+        # hidden_states_base=None,
+        # base_ratio=None,
+        # image_rotary_emb_base=None,
         additional_kwargs=None,
     ):
         residual = hidden_states
         norm_hidden_states, gate = self.norm(hidden_states, emb=temb)
         mlp_hidden_states = self.act_mlp(self.proj_mlp(norm_hidden_states))
-        
-        # when using ControlNet, only one prompt is provided 
-        if hidden_states_base is not None:
-            residual_base = hidden_states_base
-            norm_hidden_states_base, gate_base = self.norm(hidden_states_base, emb=temb)
-            mlp_hidden_states_base = self.act_mlp(self.proj_mlp(norm_hidden_states_base))
-        else:
-            norm_hidden_states_base = None
-                
+
+        # when using ControlNet, only one prompt is provided
+        # if hidden_states_base is not None:
+        #     residual_base = hidden_states_base
+        #     norm_hidden_states_base, gate_base = self.norm(hidden_states_base, emb=temb)
+        #     mlp_hidden_states_base = self.act_mlp(self.proj_mlp(norm_hidden_states_base))
+        # else:
+        #     norm_hidden_states_base = None
+
         output = self.attn(
             hidden_states=norm_hidden_states,
-            hidden_states_base=norm_hidden_states_base,
-            base_ratio=base_ratio,
+            # hidden_states_base=norm_hidden_states_base,
+            # base_ratio=base_ratio,
             image_rotary_emb=image_rotary_emb,
-            image_rotary_emb_base=image_rotary_emb_base,
+            # image_rotary_emb_base=image_rotary_emb_base,
             additional_kwargs=additional_kwargs,
         )
 
-        if hidden_states_base is not None:
-            attn_output, attn_output_base = output
-        else:
-            attn_output = output
+        # if hidden_states_base is not None:
+        #     attn_output, attn_output_base = output
+        # else:
+        attn_output = output
 
         hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
         gate = gate.unsqueeze(1)
@@ -120,19 +120,19 @@ class FluxSingleTransformerBlock(nn.Module):
         hidden_states = residual + hidden_states
         if hidden_states.dtype == torch.float16:
             hidden_states = hidden_states.clip(-65504, 65504)
-        
-        if hidden_states_base is not None:  
-            hidden_states_base = torch.cat([attn_output_base, mlp_hidden_states_base], dim=2)
-            gate_base = gate_base.unsqueeze(1)
-            hidden_states_base = gate_base * self.proj_out(hidden_states_base)
-            hidden_states_base = residual_base + hidden_states_base
-            if hidden_states_base.dtype == torch.float16:
-                hidden_states_base = hidden_states_base.clip(-65504, 65504)
 
-        if hidden_states_base is not None:
-            return hidden_states, hidden_states_base
-        else:
-            return hidden_states
+        # if hidden_states_base is not None:
+        #     hidden_states_base = torch.cat([attn_output_base, mlp_hidden_states_base], dim=2)
+        #     gate_base = gate_base.unsqueeze(1)
+        #     hidden_states_base = gate_base * self.proj_out(hidden_states_base)
+        #     hidden_states_base = residual_base + hidden_states_base
+        #     if hidden_states_base.dtype == torch.float16:
+        #         hidden_states_base = hidden_states_base.clip(-65504, 65504)
+
+        # if hidden_states_base is not None:
+        #     return hidden_states, hidden_states_base
+        # else:
+        return hidden_states
 
 
 @maybe_allow_in_graph
@@ -193,9 +193,9 @@ class FluxTransformerBlock(nn.Module):
         encoder_hidden_states: torch.FloatTensor,
         temb: torch.FloatTensor,
         image_rotary_emb=None,
-        base_ratio=None,
-        encoder_hidden_states_base=None,
-        image_rotary_emb_base=None,
+        # base_ratio=None,
+        # encoder_hidden_states_base=None,
+        # image_rotary_emb_base=None,
         additional_kwargs=None,
     ):
         norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb)
@@ -203,30 +203,30 @@ class FluxTransformerBlock(nn.Module):
         norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = self.norm1_context(
             encoder_hidden_states, emb=temb
         )
-        
+
         # when using ControlNet, only one prompt is provided
-        if encoder_hidden_states_base is not None:
-            norm_encoder_hidden_states_base, c_gate_msa_base, c_shift_mlp_base, c_scale_mlp_base, c_gate_mlp_base = self.norm1_context(
-                encoder_hidden_states_base, emb=temb
-            )
-        else:
-            norm_encoder_hidden_states_base = None
+        # if encoder_hidden_states_base is not None:
+        #     norm_encoder_hidden_states_base, c_gate_msa_base, c_shift_mlp_base, c_scale_mlp_base, c_gate_mlp_base = self.norm1_context(
+        #         encoder_hidden_states_base, emb=temb
+        #     )
+        # else:
+        #     norm_encoder_hidden_states_base = None
 
         # Attention.
         output = self.attn(
             hidden_states=norm_hidden_states,
             encoder_hidden_states=norm_encoder_hidden_states,
-            encoder_hidden_states_base=norm_encoder_hidden_states_base,
-            base_ratio=base_ratio,
+            # encoder_hidden_states_base=norm_encoder_hidden_states_base,
+            # base_ratio=base_ratio,
             image_rotary_emb=image_rotary_emb,
-            image_rotary_emb_base=image_rotary_emb_base,
+            # image_rotary_emb_base=image_rotary_emb_base,
             additional_kwargs=additional_kwargs,
         )
 
-        if encoder_hidden_states_base is not None:
-            attn_output, context_attn_output, context_attn_output_base = output
-        else:
-            attn_output, context_attn_output = output
+        # if encoder_hidden_states_base is not None:
+        #     attn_output, context_attn_output, context_attn_output_base = output
+        # else:
+        attn_output, context_attn_output = output
 
         # Process attention outputs for the `hidden_states`.
         attn_output = gate_msa.unsqueeze(1) * attn_output
@@ -252,24 +252,24 @@ class FluxTransformerBlock(nn.Module):
         encoder_hidden_states = encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
         if encoder_hidden_states.dtype == torch.float16:
             encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
-        
+
         # Process attention outputs for the `encoder_hidden_states_base`.
-        if encoder_hidden_states_base is not None:  
-            context_attn_output_base = c_gate_msa_base.unsqueeze(1) * context_attn_output_base
-            encoder_hidden_states_base = encoder_hidden_states_base + context_attn_output_base
+        # if encoder_hidden_states_base is not None:
+        #     context_attn_output_base = c_gate_msa_base.unsqueeze(1) * context_attn_output_base
+        #     encoder_hidden_states_base = encoder_hidden_states_base + context_attn_output_base
 
-            norm_encoder_hidden_states_base = self.norm2_context(encoder_hidden_states_base)
-            norm_encoder_hidden_states_base = norm_encoder_hidden_states_base * (1 + c_scale_mlp_base[:, None]) + c_shift_mlp_base[:, None]
+        #     norm_encoder_hidden_states_base = self.norm2_context(encoder_hidden_states_base)
+        #     norm_encoder_hidden_states_base = norm_encoder_hidden_states_base * (1 + c_scale_mlp_base[:, None]) + c_shift_mlp_base[:, None]
 
-            context_ff_output_base = self.ff_context(norm_encoder_hidden_states_base)
-            encoder_hidden_states_base = encoder_hidden_states_base + c_gate_mlp_base.unsqueeze(1) * context_ff_output_base
-            if encoder_hidden_states_base.dtype == torch.float16:
-                encoder_hidden_states_base = encoder_hidden_states_base.clip(-65504, 65504)
+        #     context_ff_output_base = self.ff_context(norm_encoder_hidden_states_base)
+        #     encoder_hidden_states_base = encoder_hidden_states_base + c_gate_mlp_base.unsqueeze(1) * context_ff_output_base
+        #     if encoder_hidden_states_base.dtype == torch.float16:
+        #         encoder_hidden_states_base = encoder_hidden_states_base.clip(-65504, 65504)
 
-        if encoder_hidden_states_base is not None:
-            return encoder_hidden_states, hidden_states, encoder_hidden_states_base
-        else:
-            return encoder_hidden_states, hidden_states
+        # if encoder_hidden_states_base is not None:
+        #     return encoder_hidden_states, hidden_states, encoder_hidden_states_base
+        # else:
+        return encoder_hidden_states, hidden_states
 
 
 class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
@@ -454,6 +454,24 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
         if hasattr(module, "gradient_checkpointing"):
             module.gradient_checkpointing = value
 
+    # def set_adapter(self, adapter_name: Union[str, list[str]]) -> None:
+
+    #     from peft.tuners.tuners_utils import BaseTunerLayer
+    #     _adapters_has_been_set = False
+
+    #     for _, module in self.named_modules():
+    #         if isinstance(module, BaseTunerLayer):
+    #             if hasattr(module, "set_adapter"):
+    #                 module.set_adapter(adapter_name)
+    #             else:
+    #                 module.active_adapter = adapter_name
+    #             _adapters_has_been_set = True
+
+    #     if not _adapters_has_been_set:
+    #         raise ValueError(
+    #             "Did not succeeded in setting the adapter. Please make sure you are using a model that supports adapters."
+    #         )
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -469,6 +487,7 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
         controlnet_block_samples=None,
         controlnet_single_block_samples=None,
         return_dict: bool = True,
+        do_regional: bool = False,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
         The [`FluxTransformer2DModel`] forward method.
@@ -528,7 +547,7 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
         additional_kwargs["regional_attention_mask"] = joint_attention_kwargs['regional_attention_mask']
         additional_kwargs["hidden_seq_len"] = hidden_states.shape[1]
         # when using controlnet, only one prompt is provided, so we need to consider the case
-        if encoder_hidden_states_base is not None:  
+        if encoder_hidden_states_base is not None:
             txt_ids_base = txt_ids
             encoder_hidden_states_base = self.context_embedder(encoder_hidden_states_base)
             additional_kwargs["encoder_seq_len_base"] = encoder_hidden_states_base.shape[1]
@@ -538,7 +557,7 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
         txt_ids = torch.zeros(encoder_hidden_states.shape[1], 3).to(device=txt_ids.device, dtype=txt_ids.dtype)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
         additional_kwargs["encoder_seq_len"] = encoder_hidden_states.shape[1]
-        
+
 
         if txt_ids.ndim == 3:
             logger.warning(
@@ -586,23 +605,121 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
                 )
 
             else:
-                encoder_hidden_states, hidden_states, encoder_hidden_states_base = block(
-                    hidden_states=hidden_states,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_hidden_states_base=encoder_hidden_states_base,
-                    base_ratio=base_ratio,
-                    temb=temb,
-                    image_rotary_emb=image_rotary_emb,
-                    image_rotary_emb_base=image_rotary_emb_base,
-                    additional_kwargs=additional_kwargs if index_block % joint_attention_kwargs['double_inject_blocks_interval'] == 0 else {k: v for k, v in additional_kwargs.items() if k != 'regional_attention_mask'}, # delete attention mask to avoid region control
-                )
+                if index_block % joint_attention_kwargs['double_inject_blocks_interval'] == 0 \
+                and additional_kwargs.get('regional_attention_mask', None) is not None \
+                and do_regional:
+                    regional_attention_mask = additional_kwargs['regional_attention_mask']
+
+                    for i in range(len(regional_attention_mask)):
+
+                        self.set_adapters(
+                            joint_attention_kwargs['regional_adapters'][i],
+                            joint_attention_kwargs['regional_adapter_weights'][i]
+                        )
+
+                        additional_kwargs_copy = additional_kwargs.copy()
+                        mask = regional_attention_mask[i]
+                        additional_kwargs_copy['regional_attention_mask'] = mask
+                        # print('Shapes:')
+                        # print(f'encoder_hidden_states: {encoder_hidden_states.shape}')
+                        # print(f'hidden_states: {hidden_states.shape}')
+                        # print(f'encoder_hidden_states_base: {encoder_hidden_states_base.shape}')
+                        # print(f'temb: {temb.shape}')
+                        # print(f'Regional attention mask: {regional_attention_mask[i].shape}')
+                        encoder_len = encoder_hidden_states.shape[1]
+                        # encoder_base_len = encoder_hidden_states_base.shape[1]
+
+                        mask_1d = torch.any(mask, dim=1).to(hidden_states.device)
+                        hidden_states_masked = hidden_states * mask_1d[encoder_len:, None]
+                        encoder_hidden_states_masked = encoder_hidden_states *  mask_1d[:encoder_len, None]
+                        # encoder_hidden_states_base_masked = encoder_hidden_states_base * mask_1d[encoder_len-encoder_base_len:encoder_len, None]
+                        # for emb in image_rotary_emb:
+                        #     print(f"image_rotary_emb shape: {emb.shape}")
+                        # for emb in image_rotary_emb_base:
+                        #     print(f"image_rotary_emb_base shape: {emb.shape}")
+                        image_rotary_emb_masked = tuple([emb * mask_1d[:, None] for emb in image_rotary_emb])
+                        # image_rotary_emb_base_masked = tuple([emb * mask_1d[encoder_base_len:, None] for emb in image_rotary_emb_base])
+
+                        encoder_hidden_states_out, hidden_states_out = block(
+                            hidden_states=hidden_states_masked,
+                            encoder_hidden_states=encoder_hidden_states_masked,
+                            # encoder_hidden_states_base=encoder_hidden_states_base,
+                            # base_ratio=base_ratio,
+                            temb=temb,
+                            image_rotary_emb=image_rotary_emb_masked,
+                            # image_rotary_emb_base=image_rotary_emb_base,
+                            additional_kwargs=additional_kwargs_copy,
+                        )
+
+                        # encoder_hidden_states = encoder_hidden_states * mask_1d[:encoder_len, None]
+                        # hidden_states = hidden_states * mask_1d[encoder_len:, None]
+                        # encoder_hidden_states_base = encoder_hidden_states_base * mask_1d[encoder_len-encoder_base_len:encoder_len, None]
+                        # image_rotary_emb = tuple([emb * mask_1d[:, None] for emb in image_rotary_emb])
+
+                        encoder_hidden_states_out = encoder_hidden_states_out * mask_1d[:encoder_len, None]
+                        hidden_states_out = hidden_states_out * mask_1d[encoder_len:, None]
+
+                        if i == 0:
+                            combined_encoder_hidden_states = encoder_hidden_states_out
+                            combined_hidden_states = hidden_states_out
+                        else:
+                            combined_encoder_hidden_states += encoder_hidden_states_out
+                            combined_hidden_states += hidden_states_out
+
+                    self.set_adapters(
+                        joint_attention_kwargs['base_adapter'],
+                        joint_attention_kwargs['base_adapter_weight']
+                    )
+                    encoder_hidden_states_base, hidden_states_base = block(
+                        hidden_states=hidden_states,
+                        encoder_hidden_states=encoder_hidden_states_base,
+                        temb=temb,
+                        image_rotary_emb=image_rotary_emb_base,
+                        additional_kwargs=additional_kwargs_copy,
+                    )
+
+                    encoder_hidden_states = combined_encoder_hidden_states
+                    hidden_states = combined_hidden_states
+                    hidden_states = hidden_states * (1 - base_ratio) + hidden_states_base * base_ratio
+
+                else:
+                    # print(f"index_block: {index_block}")
+                    self.set_adapters(
+                        joint_attention_kwargs['normal_adapter'],
+                        joint_attention_kwargs['normal_adapter_weight']
+                    )
+                    if base_ratio is not None:
+                        encoder_hidden_states, combined_hidden_states = block(
+                            hidden_states=hidden_states,
+                            encoder_hidden_states=encoder_hidden_states,
+                            temb=temb,
+                            image_rotary_emb=image_rotary_emb,
+                            additional_kwargs={k: v for k, v in additional_kwargs.items() if k != 'regional_attention_mask'},
+                        )
+                        encoder_hidden_states_base, hidden_states_base = block(
+                            hidden_states=hidden_states,
+                            encoder_hidden_states=encoder_hidden_states_base,
+                            temb=temb,
+                            image_rotary_emb=image_rotary_emb_base,
+                            additional_kwargs={k: v for k, v in additional_kwargs.items() if k != 'regional_attention_mask'},
+                        )
+
+                        hidden_states = combined_hidden_states * (1 - base_ratio) + hidden_states_base * base_ratio
+                    else:
+                        encoder_hidden_states, hidden_states = block(
+                            hidden_states=hidden_states,
+                            encoder_hidden_states=encoder_hidden_states,
+                            temb=temb,
+                            image_rotary_emb=image_rotary_emb,
+                            additional_kwargs={k: v for k, v in additional_kwargs.items() if k != 'regional_attention_mask'},
+                        )
 
             # controlnet residual
             if controlnet_block_samples is not None:
                 interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
                 interval_control = int(np.ceil(interval_control))
                 hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
-        
+
         if encoder_hidden_states_base is not None:
             hidden_states_base = torch.cat([encoder_hidden_states_base, hidden_states], dim=1)
         else:
@@ -632,15 +749,120 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
                 )
 
             else:
-                hidden_states, hidden_states_base = block(
-                    hidden_states=hidden_states,
-                    hidden_states_base=hidden_states_base,
-                    base_ratio=base_ratio,
-                    temb=temb,
-                    image_rotary_emb=image_rotary_emb,
-                    image_rotary_emb_base=image_rotary_emb_base,
-                    additional_kwargs=additional_kwargs if index_block % joint_attention_kwargs['single_inject_blocks_interval'] == 0 else {k: v for k, v in additional_kwargs.items() if k != 'regional_attention_mask'}, # delete attention mask to avoid region control
-                )
+                if index_block % joint_attention_kwargs['double_inject_blocks_interval'] == 0 \
+                and additional_kwargs.get('regional_attention_mask', None) is not None \
+                and do_regional:
+                    regional_attention_mask = additional_kwargs['regional_attention_mask']
+
+                    for i in range(len(regional_attention_mask)):
+                        self.set_adapters(
+                            joint_attention_kwargs['regional_adapters'][i],
+                            joint_attention_kwargs['regional_adapter_weights'][i]
+                        )
+
+                        additional_kwargs_copy = additional_kwargs.copy()
+                        mask = regional_attention_mask[i]
+                        additional_kwargs_copy['regional_attention_mask'] = mask
+                        # print('Shapes:')
+                        # print(f'hidden_states: {hidden_states.shape}')
+                        # print(f'hidden_states_base shape: {hidden_states_base.shape}')
+                        # print(f'temb: {temb.shape}')
+                        # print(f'Regional attention mask: {mask.shape}')
+
+                        mask_1d = torch.any(mask, dim=1).to(hidden_states.device)
+
+                        hidden_states_masked = hidden_states * mask_1d[:, None]
+                        # hidden_states_base_masked = hidden_states_base * mask_1d[encoder_base_len:, None]
+
+                        # image_rotary_emb_masked = []
+                        # for emb in image_rotary_emb:
+                        #     image_rotary_emb_masked.append(emb * mask_1d[:, None])
+                        image_rotary_emb_masked = tuple([emb * mask_1d[:, None] for emb in image_rotary_emb])
+                        # image_rotary_emb_base_masked = tuple([emb * mask_1d[encoder_base_len:, None] for emb in image_rotary_emb_base])
+
+                        hidden_states_out = block(
+                            hidden_states=hidden_states_masked,
+                            # hidden_states_base=hidden_states_base,
+                            # base_ratio=base_ratio,
+                            temb=temb,
+                            image_rotary_emb=image_rotary_emb_masked,
+                            # image_rotary_emb_base=image_rotary_emb_base,
+                            additional_kwargs=additional_kwargs_copy,
+                        )
+
+                        hidden_states_out = hidden_states_out * mask_1d[:, None]
+                        # hidden_states_base_out = hidden_states_base_out * mask_1d[encoder_base_len:, None]
+
+                        if i == 0:
+                            combined_hidden_states = hidden_states_out
+                            # total_hidden_states_base = hidden_states_base_out
+                        else:
+                            combined_hidden_states += hidden_states_out
+                            # total_hidden_states_base += hidden_states_base_out
+
+                    hidden_states = combined_hidden_states
+
+                    self.set_adapters(
+                        joint_attention_kwargs['base_adapter'],
+                        joint_attention_kwargs['base_adapter_weight']
+                    )
+                    hidden_states_base = block(
+                            hidden_states=hidden_states_base,
+                            # hidden_states_base=hidden_states_base,
+                            # base_ratio=base_ratio,
+                            temb=temb,
+                            image_rotary_emb=image_rotary_emb_base,
+                            # image_rotary_emb_base=image_rotary_emb_base,
+                            additional_kwargs=additional_kwargs_copy,
+                        )
+                    encoder_hidden_states_temp, hidden_states_temp = (
+                        hidden_states[:, : additional_kwargs['encoder_seq_len']],
+                        hidden_states[:, additional_kwargs['encoder_seq_len'] :],
+                    )
+
+                    encoder_hidden_states_base_temp, hidden_states_base_temp = (
+                        hidden_states_base[:, :additional_kwargs["encoder_seq_len_base"]],
+                        hidden_states_base[:, additional_kwargs["encoder_seq_len_base"] :],
+                    )
+
+                    hidden_states_temp = hidden_states_temp*(1-base_ratio) + hidden_states_base_temp*base_ratio
+                    hidden_states = torch.cat([encoder_hidden_states_temp, hidden_states_temp], dim=1)
+
+                else:
+                    self.set_adapters(
+                        joint_attention_kwargs['normal_adapter'],
+                        joint_attention_kwargs['normal_adapter_weight']
+                    )
+                    if base_ratio is not None:
+                        combined_hidden_states = block(
+                            hidden_states=hidden_states,
+                            temb=temb,
+                            image_rotary_emb=image_rotary_emb,
+                            additional_kwargs={k: v for k, v in additional_kwargs.items() if k != 'regional_attention_mask'}, # delete attention mask to avoid region control
+                        )
+                        hidden_states_base = block(
+                            hidden_states=hidden_states_base,
+                            temb=temb,
+                            image_rotary_emb=image_rotary_emb_base,
+                            additional_kwargs={k: v for k, v in additional_kwargs.items() if k != 'regional_attention_mask'}, # delete attention mask to avoid region control
+                        )
+                        encoder_hidden_states_temp, hidden_states_temp = (
+                            combined_hidden_states[:, : additional_kwargs['encoder_seq_len']],
+                            combined_hidden_states[:, additional_kwargs['encoder_seq_len'] :],
+                        )
+                        encoder_hidden_states_base_temp, hidden_states_base_temp = (
+                            hidden_states_base[:, :additional_kwargs["encoder_seq_len_base"]],
+                            hidden_states_base[:, additional_kwargs["encoder_seq_len_base"] :],
+                        )
+                        hidden_states_temp = hidden_states_temp*(1-base_ratio) + hidden_states_base_temp*base_ratio
+                        hidden_states = torch.cat([encoder_hidden_states_temp, hidden_states_temp], dim=1)
+                    else:
+                        hidden_states = block(
+                            hidden_states=hidden_states,
+                            temb=temb,
+                            image_rotary_emb=image_rotary_emb,
+                            additional_kwargs={k: v for k, v in additional_kwargs.items() if k != 'regional_attention_mask'}, # delete attention mask to avoid region control
+                        )
 
             # controlnet residual
             if controlnet_single_block_samples is not None:
